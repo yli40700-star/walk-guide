@@ -57,6 +57,7 @@ label.lbl{display:block;margin-top:12px;font-size:14px;color:var(--muted)}
 .chip input{position:absolute;opacity:0;inset:0}
 .chip span{display:inline-block;padding:6px 14px;border-radius:999px;border:2px solid var(--line);font-size:15px;cursor:pointer}
 .chip input:checked+span{background:var(--sky);border-color:var(--sky);color:#fff}
+.secret{-webkit-text-security:disc;font-family:var(--latin)}
 .hint{font-size:13px;color:var(--muted);margin:6px 0 0}
 
 .ask{display:flex;gap:8px;margin-top:22px}
@@ -95,9 +96,10 @@ label.lbl{display:block;margin-top:12px;font-size:14px;color:var(--muted)}
   <section id="setup" class="hide">
     <div class="status show">填入 API key 开始使用。key 不会被保存，关掉或刷新页面后需要重新填写。</div>
     <label class="lbl" for="kA">Anthropic API key（讲稿）</label>
-    <input class="field" id="kA" type="password" autocomplete="off" placeholder="sk-ant-api03-…">
+    <input class="field secret" id="kA" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" placeholder="sk-ant-…">
     <label class="lbl" for="kO">OpenAI API key（语音，可不填，不填就用系统朗读）</label>
-    <input class="field" id="kO" type="password" autocomplete="off" placeholder="sk-proj-…">
+    <input class="field secret" id="kO" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" placeholder="sk-proj-…">
+    <p class="err" id="keyErr" role="alert"></p>
     <button class="main-btn" id="saveKeys">开始</button>
   </section>
 
@@ -179,8 +181,11 @@ for (const id of ["voice"]) {
 try { localStorage.removeItem("wg_kA"); localStorage.removeItem("wg_kO"); } catch (_) {}
 showSetup();
 $("saveKeys").onclick = () => {
-  const a = $("kA").value.trim(), o = $("kO").value.trim();
-  if (!a) { $("kA").focus(); return; }
+  const clean = v => v.replace(/[\s\u200B-\u200D\uFEFF]/g, "");   // 去掉粘贴带进来的空格、换行、零宽字符
+  const a = clean($("kA").value), o = clean($("kO").value);
+  if (!a.startsWith("sk-ant-")) { $("keyErr").textContent = "Anthropic key 应该以 sk-ant- 开头，请检查是否粘贴错了框。"; $("kA").focus(); return; }
+  if (o && !o.startsWith("sk-")) { $("keyErr").textContent = "OpenAI key 应该以 sk- 开头。"; $("kO").focus(); return; }
+  $("keyErr").textContent = "";
   store.set("wg_kA", a); if (o) store.set("wg_kO", o); else store.del("wg_kO");
   $("kA").value = ""; $("kO").value = "";
   showApp();
@@ -380,7 +385,10 @@ async function streamClaude(prompt, onText, signal){
 }
 function errText(e){
   if (e?.name === "AbortError") return "";
-  if (e?.status === 401) return "Anthropic API key 无效。点「补充说明、兴趣和设置」→「更换 API key」。";
+  if (e?.status === 401) {
+    const k = store.get("wg_kA");
+    return `Anthropic 拒绝了这个 key（${e.msg || "401"}）。页面收到的 key 是 ${k.slice(0, 14)}…${k.slice(-4)}，共 ${k.length} 位，和你的 key 对一下。不一致的话，点「补充说明、兴趣和设置」→「更换 API key」重新粘贴。`;
+  }
   if (e?.status === 404) return "模型不可用。";
   if (e?.status === 429) return "请求太频繁或额度不足，自动讲解已暂停，稍后再试。";
   if (e?.status === 529 || e?.status === 503) return "服务暂时繁忙，等一会儿再试。";
