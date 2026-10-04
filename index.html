@@ -93,12 +93,12 @@ label.lbl{display:block;margin-top:12px;font-size:14px;color:var(--muted)}
   </header>
 
   <section id="setup" class="hide">
-    <div class="status show">第一次使用：填入两个 API key。它们只保存在这台手机的浏览器里。</div>
+    <div class="status show">填入 API key 开始使用。key 不会被保存，关掉或刷新页面后需要重新填写。</div>
     <label class="lbl" for="kA">Anthropic API key（讲稿）</label>
     <input class="field" id="kA" type="password" autocomplete="off" placeholder="sk-ant-api03-…">
     <label class="lbl" for="kO">OpenAI API key（语音，可不填，不填就用系统朗读）</label>
     <input class="field" id="kO" type="password" autocomplete="off" placeholder="sk-proj-…">
-    <button class="main-btn" id="saveKeys">保存并开始</button>
+    <button class="main-btn" id="saveKeys">开始</button>
   </section>
 
   <section id="app" class="hide">
@@ -141,7 +141,7 @@ label.lbl{display:block;margin-top:12px;font-size:14px;color:var(--muted)}
         <option value="nova">nova</option><option value="coral">coral</option><option value="alloy">alloy</option>
         <option value="shimmer">shimmer</option><option value="echo">echo</option><option value="onyx">onyx</option>
       </select>
-      <div class="row"><button class="ghost" id="resetKeys">重新填写 API key</button></div>
+      <div class="row"><button class="ghost" id="resetKeys">更换 API key</button></div>
       <p class="hint">自动讲解：每走出约 300 米且距上次至少 4 分钟会自动讲下一段，连续 12 段后暂停。页面要保持在前台，锁屏后定位会停。</p>
     </details>
 
@@ -150,17 +150,17 @@ label.lbl{display:block;margin-top:12px;font-size:14px;color:var(--muted)}
 </div>
 
 <script>
-/* ===== 在这里填 key（填了就不用在页面里输入）===== */
-const EMBED_ANTHROPIC_KEY = "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";
-const EMBED_OPENAI_KEY = "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";
 const MODEL = "claude-sonnet-5-5";
-/* ================================================ */
+const showFatal = msg => { const el = document.getElementById("story"); if (el) el.insertAdjacentHTML("beforeend", `<p class="err">出错了：${String(msg).replace(/[&<>]/g, "")}</p>`); };
+window.addEventListener("error", e => showFatal(e.message));
+window.addEventListener("unhandledrejection", e => showFatal(e.reason?.message || e.reason?.msg || e.reason));
 const $ = id => document.getElementById(id);
 const AUTO_DIST = 300, AUTO_GAP = 4 * 60 * 1000, AUTO_MAX = 12;
+const keys = { wg_kA: "", wg_kO: "" };   // API key 只放在内存里，关掉或刷新页面就没了
 const store = {
-  get: k => { try { return localStorage.getItem(k) || ""; } catch (_) { return ""; } },
-  set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} },
-  del: k => { try { localStorage.removeItem(k); } catch (_) {} },
+  get: k => k in keys ? keys[k] : (() => { try { return localStorage.getItem(k) || ""; } catch (_) { return ""; } })(),
+  set: (k, v) => { if (k in keys) { keys[k] = v; return; } try { localStorage.setItem(k, v); } catch (_) {} },
+  del: k => { if (k in keys) { keys[k] = ""; return; } try { localStorage.removeItem(k); } catch (_) {} },
 };
 
 let pos = null, watchId = null, ctl = null, busy = false;
@@ -176,9 +176,8 @@ for (const id of ["voice"]) {
   const v = store.get("wg_" + id); if (v) $(id).value = v;
   $(id).onchange = () => store.set("wg_" + id, $(id).value);
 }
-if (EMBED_ANTHROPIC_KEY && !store.get("wg_kA")) store.set("wg_kA", EMBED_ANTHROPIC_KEY);
-if (EMBED_OPENAI_KEY && !store.get("wg_kO")) store.set("wg_kO", EMBED_OPENAI_KEY);
-if (store.get("wg_kA")) showApp(); else showSetup();
+try { localStorage.removeItem("wg_kA"); localStorage.removeItem("wg_kO"); } catch (_) {}
+showSetup();
 $("saveKeys").onclick = () => {
   const a = $("kA").value.trim(), o = $("kO").value.trim();
   if (!a) { $("kA").focus(); return; }
@@ -198,12 +197,15 @@ function dist(a, b){
 }
 function locate(){
   return new Promise((res, rej) => {
-    if (!("geolocation" in navigator)) return rej({ code: 0 });
-    navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 });
+    if (!("geolocation" in navigator) || !window.isSecureContext) return rej({ code: 0 });
+    const t = setTimeout(() => rej({ code: 3 }), 20000);   // 弹窗没点、系统没授权时浏览器可能一直不回调
+    navigator.geolocation.getCurrentPosition(p => { clearTimeout(t); res(p); }, e => { clearTimeout(t); rej(e); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 });
   });
 }
 function geoErr(e){
-  if (e && e.code === 1) return "定位被拒绝了。去 设置 → 隐私与安全性 → 定位服务 → Safari 网站，改成「使用期间」，然后刷新页面。";
+  if (e && e.code === 1) return "定位被拒绝了。手机：设置 → 隐私与安全性 → 定位服务 → Safari 网站，改成「使用期间」；电脑 Chrome：点地址栏左边的图标允许位置，Mac 还要在 系统设置 → 隐私与安全性 → 定位服务 里允许 Chrome。改完刷新页面。";
+  if (e && e.code === 2) return "设备拿不到位置（可能是系统定位服务关了）。";
   if (e && e.code === 3) return "定位超时了，换个开阔点的地方再试。";
   if (!window.isSecureContext) return "这个页面要用 https 地址打开才能定位。";
   return "拿不到定位。可以在「补充说明」里写你在哪。";
@@ -285,9 +287,15 @@ function enqueueSpeech(chunk){
   if (!voiceOn) return;
   const text = speakable(chunk); if (!text.replace(/[。\s]/g, "")) return;
   const gen = speechGen;
-  const item = { text, audio: fetchTTS(text).catch(() => null) };   // 立即开始合成，播放时按顺序取
+  const item = { text, audio: fetchTTS(text).catch(e => { ttsNote(e); return null; }) };   // 立即开始合成，播放时按顺序取
   speechQueue.push(item);
   if (!playing) playNext(gen);
+}
+let ttsNoted = false;
+function ttsNote(e){
+  if (ttsNoted) return; ttsNoted = true;
+  const why = e?.message === "tts 401" ? "OpenAI key 无效" : e?.message === "tts 429" ? "OpenAI 额度不足或请求太频繁" : "OpenAI 语音合成失败（" + (e?.message || "网络问题") + "）";
+  $("story").insertAdjacentHTML("beforeend", `<p class="err">${why}，已改用手机自带朗读。自带朗读在静音模式下没有声音，请把手机侧边的静音开关拨开。</p>`);
 }
 async function fetchTTS(text){
   const key = store.get("wg_kO"); if (!key) return null;
@@ -346,14 +354,14 @@ async function streamClaude(prompt, onText, signal){
       "anthropic-dangerous-direct-browser-access": "true",
       "content-type": "application/json",
     },
-    body: JSON.stringify({ model: MODEL, max_tokens: 1500, stream: true, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model: MODEL, max_tokens: 4000, thinking: { type: "between_tools" }, stream: true, messages: [{ role: "user", content: prompt }] }),
   });
   if (!res.ok) {
     let msg = ""; try { msg = (await res.json()).error?.message || ""; } catch (_) {}
     throw { status: res.status, msg };
   }
   const reader = res.body.getReader(), dec = new TextDecoder();
-  let buf = "", text = "";
+  let buf = "", text = "", stop = "";
   for (;;) {
     const { value, done } = await reader.read(); if (done) break;
     buf += dec.decode(value, { stream: true });
@@ -363,14 +371,16 @@ async function streamClaude(prompt, onText, signal){
       const line = evt.split("\n").find(l => l.startsWith("data: ")); if (!line) continue;
       let d; try { d = JSON.parse(line.slice(6)); } catch (_) { continue; }
       if (d.type === "content_block_delta" && d.delta?.type === "text_delta") { text += d.delta.text; onText(text); }
+      if (d.type === "message_delta" && d.delta?.stop_reason) stop = d.delta.stop_reason;
       if (d.type === "error") throw { status: 500, msg: d.error?.message || "" };
     }
   }
+  if (!text.trim()) throw { status: 0, msg: `模型没有返回正文（结束原因：${stop || "未知"}）` };
   return text;
 }
 function errText(e){
   if (e?.name === "AbortError") return "";
-  if (e?.status === 401) return "Anthropic API key 无效。点「补充说明、兴趣和设置」→「重新填写 API key」。";
+  if (e?.status === 401) return "Anthropic API key 无效。点「补充说明、兴趣和设置」→「更换 API key」。";
   if (e?.status === 404) return "模型不可用。";
   if (e?.status === 429) return "请求太频繁或额度不足，自动讲解已暂停，稍后再试。";
   if (e?.status === 529 || e?.status === 503) return "服务暂时繁忙，等一会儿再试。";
@@ -387,11 +397,13 @@ async function run({ auto = false, question = "" } = {}){
 
   if (!auto) {
     $("locState").textContent = "正在定位…";
+    $("story").innerHTML = '<p class="thinking">正在获取你的位置…如果浏览器弹出定位授权，请点允许。</p>';
     try { pos = await locate(); $("locState").textContent = "已定位"; $("coords").textContent = fmt(pos); }
     catch (e) {
       if (!pos) { $("locState").textContent = "没有定位"; $("coords").textContent = geoErr(e); }
       if (!pos && !$("note").value.trim() && !question) {
-        document.querySelector("details").open = true; $("note").focus();
+        $("story").innerHTML = `<p class="err">${esc(geoErr(e))}</p><p>也可以不用定位：在下面「补充说明」里写你在哪，再点「讲讲我附近」。</p>`;
+        document.querySelector("details").open = true;
         return done();
       }
     }
